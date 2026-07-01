@@ -98,7 +98,7 @@ Second header value: `0` when area `StatusCode` is 204, else `-1`.
 | `Name` | string | Stop name |
 | `StopIdx` | int | Stop sequence index |
 | `Time` | string | Relative time (`2 min`, `Now`, `1 min`) |
-| `TimeArrival` | string | Absolute arrival `hh:mm` |
+| `TimeArrival` | string | Absolute arrival `hh:mm` (local, per account timezone) |
 | `TariffZone` | string | Fare zone |
 | `Requested` | bool | Stop requested / alighting |
 | `AtStop` | bool | Vehicle at this stop |
@@ -151,6 +151,8 @@ When populated, each `Content[]` item:
 
 **Note:** This MQTT-backed service populates **LD** from `pis/{vehicle}/connections` and leaves **TD** / **MD** empty unless extended later.
 
+LD times support both the spec `departures[]` format and the Vilnius `nextPlannedDepartureTime` / `presentedDepartureTimes` format. Clock times in `TimeArrival`, `ETA`, and LD `PlannedTime` / `Absolute` are converted from UTC using `accounts.*.timezone`.
+
 ## OM — Operation messages
 
 Each `Content[]` item:
@@ -162,6 +164,45 @@ Each `Content[]` item:
 | `MessageData.Detail` | string |
 | `MessageData.ValidFrom` | ISO 8601 (optional) |
 | `MessageData.ValidTo` | ISO 8601 (optional) |
+| `MessageData.Heading_Multilanguage` | object (optional) |
+| `MessageData.Detail_Multilanguage` | object (optional) |
+
+### Example OM for testing
+
+When the MQTT feed has no operational messages, you can inject sample content per account:
+
+```yaml
+accounts:
+  vilnius:
+    base_language: "lt"
+    inject_example_om_when_empty: true
+    example_om_messages:
+      - message_type: 2
+        heading: "Eismo informacija"
+        detail: "Bandomasis pranešimas ekranų testavimui."
+        heading_multilanguage:
+          lt: "Eismo informacija"
+          en: "Traffic information"
+      - message_type: 2
+        heading: "Planuojami darbai"
+        detail: "Gatvės remonto darbai gali sukelti vėlavimų."
+```
+
+Set `inject_example_om_when_empty: false` (default) in production. Live MQTT messages always replace examples when present.
+
+See also `docs/mqtt-pis-mapping.md` for full MQTT → OM field mapping.
+
+## Account configuration
+
+| Setting | Description |
+|---------|-------------|
+| `base_language` | Language code for OM and multilanguage defaults |
+| `timezone` | IANA timezone for FS/LD clock times (MQTT timestamps are UTC) |
+| `max_following_stops` | FS `Content` row limit |
+| `max_connections_per_stop` | FS compact connection limit |
+| `fs_connection_mode` | `compact` or `none` |
+| `inject_example_om_when_empty` | Use `example_om_messages` when MQTT OM is empty |
+| `example_om_messages` | List of test OM entries (see above) |
 
 ## Example (vehicle 1232)
 
@@ -197,4 +238,33 @@ See live reference: [http://pacimitcs-scand.ltg-emea.com:8084/api/stopinfo/hsl/1
 
 ## Health check
 
-`GET /health` → `{ "status": "ok" }`
+`GET /health` → service status and cache overview:
+
+```json
+{
+  "status": "ok",
+  "http_port": 8084,
+  "accounts_configured": ["vilnius", "hsl"],
+  "mqtt": {
+    "layout": "vilniustest/{vehicle}/pis/0/{suffix}",
+    "broker": "172.160.242.170",
+    "port": 11883,
+    "connected": true,
+    "messages_received": 42
+  },
+  "cache": {
+    "vehicles_in_memory": 3,
+    "vehicles_with_mqtt_data": 2,
+    "cached_http_responses": 2,
+    "vehicle_ids": ["1721", "1232"],
+    "vehicles_with_data_ids": ["1721"],
+    "cached_accounts": ["vilnius"]
+  }
+}
+```
+
+- **`vehicles_with_mqtt_data`** — vehicles that have received at least one MQTT message
+- **`cached_http_responses`** — pre-built HTTP payloads ready to serve
+- If `messages_received` stays 0, check MQTT topic layout in config (`root`, `topic_prefix`, `pis_instance`)
+
+The `{account}` in `/api/stopinfo/{account}/{vehicle}` selects account settings. Any account name works; add preferred accounts under `accounts:` in config for defaults.

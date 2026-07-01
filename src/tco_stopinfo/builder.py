@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from .config import AccountConfig
+from .time_format import format_hhmm_local, get_timezone
 
 STATUS_OK = 200
 STATUS_NO_CONTENT = 204
@@ -62,11 +64,8 @@ def _format_relative_minutes(minutes: int | None, *, show_now: bool) -> str | No
     return f"{minutes} min"
 
 
-def _format_hhmm(iso_time: str | None) -> str | None:
-    target = _parse_iso_datetime(iso_time)
-    if target is None:
-        return None
-    return target.strftime("%H:%M")
+def _format_hhmm(iso_time: str | None, tz: ZoneInfo) -> str | None:
+    return format_hhmm_local(iso_time, tz)
 
 
 def _tariff_zone(stop: dict[str, Any]) -> str:
@@ -88,11 +87,133 @@ def _visible_stops(stops: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [s for s in stops if not s.get("blind")]
 
 
+def _resolve_fs_target(stopinfo: dict[str, Any] | None) -> tuple[int | None, bool]:
+    """Return target call sequence and AtStop from pis/0/stopinfo only."""
+    if not stopinfo or stopinfo.get("callSequenceNumber") is None:
+        return None, False
+    seq = int(stopinfo["callSequenceNumber"])
+    stop_type = (stopinfo.get("type") or "ARRIVAL").upper()
+    if stop_type == "ARRIVAL":
+        return seq, True
+    if stop_type in ("DEPARTURE", "PASSAGE"):
+        return seq + 1, False
+    return seq, True
+
+
+def _eta_for_sequence(linkprogress: dict[str, Any], seq: int) -> str | None:
+    if linkprogress.get("callSequenceNumber") == seq:
+        return linkprogress.get("expectedArrivalTime")
+    for item in linkprogress.get("followingStops") or []:
+        if item.get("callSequenceNumber") == seq:
+            return item.get("expectedArrivalTime")
+    return None
+
+
+def _build_following_rows(
+    *,
+    stops: list[dict[str, Any]],
+    linkprogress: dict[str, Any],
+    target_seq: int | None,
+    at_stop: bool,
+    max_stops: int,
+    fs_connections: list[dict[str, Any]],
+    stop_pressed: bool,
+    tz: ZoneInfo,
+) -> list[dict[str, Any]]:
+    if not stops or target_seq is None:
+        return []
+
+    start_idx = _find_start_index(stops, target_seq)
+    if start_idx is None:
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for offset, stop in enumerate(stops[start_idx : start_idx + max_stops]):
+        seq = int(stop.get("number", start_idx + offset + 1))
+        eta_iso = _eta_for_sequence(linkprogress, seq) or stop.get("estimatedArrivalFull")
+        rows.append(
+            _build_following_stop_row(
+                stop,
+                stop_idx=start_idx + offset,
+                eta_iso=eta_iso,
+                show_now=offset == 0,
+                at_stop=at_stop and offset == 0,
+                connections=fs_connections if offset == 0 else [],
+                stop_pressed=stop_pressed,
+                tz=tz,
+            )
+        )
+    return rows
+
+
+def _stop_list_index(stops: list[dict[str, Any]], sequence: int | None) -> int | None:
+    if sequence is None:
+        return None
+    for idx, stop in enumerate(stops):
+        if stop.get("number") == sequence:
+            return idx
+    return None
+
+
+def _find_start_index(stops: list[dict[str, Any]], target_seq: int) -> int | None:
+    exact = _stop_list_index(stops, target_seq)
+    if exact is not None:
+        return exact
+    for idx, stop in enumerate(stops):
+        if stop.get("number", 0) >= target_seq:
+            return idx
+    return None
+
+
+def _delay_minutes(linkprogress: dict[str, Any], stopinfo: dict[str, Any] | None = None) -> int:
+    delay_seconds = linkprogress.get("delaySeconds")
+    if delay_seconds is None:
+        delay_seconds = linkprogress.get("departureDelaySeconds")
+    if delay_seconds is None and stopinfo:
+        estimate = stopinfo.get("estimate") or {}
+        delay_seconds = estimate.get("delay")
+    if delay_seconds is None:
+        return 0
+    return int(delay_seconds // 60)
+
+
+def _multilanguage_fields(
+    heading: str,
+    detail: str,
+    heading_ml: dict[str, Any] | None,
+    detail_ml: dict[str, Any] | None,
+    base_language: str,
+) -> dict[str, Any]:
+    data: dict[str, Any] = {
+        "Heading": heading,
+        "Detail": detail,
+    }
+    if heading_ml and len(heading_ml) > 1:
+        data["Heading_Multilanguage"] = {str(k): str(v) for k, v in heading_ml.items()}
+        if base_language in heading_ml:
+            data["Heading"] = str(heading_ml[base_language])
+    if detail_ml and len(detail_ml) > 1:
+        data["Detail_Multilanguage"] = {str(k): str(v) for k, v in detail_ml.items()}
+        if base_language in detail_ml:
+            data["Detail"] = str(detail_ml[base_language])
+    return data
+
+
+def _iso_or_empty(value: str | None) -> str:
+    if not value:
+        return ""
+    parsed = _parse_iso_datetime(value)
+    if parsed is None:
+        return value
+    return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _build_destinations(
     destination: dict[str, Any] | None,
     dest_list: dict[str, Any] | None,
     linkprogress: dict[str, Any] | None,
     stops: list[dict[str, Any]],
+    tz: ZoneInfo,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -111,7 +232,7 @@ def _build_destinations(
                 "DestinationName": name,
                 "DestinationStopName": stop_name,
                 "DestinationStopIdx": stop_idx,
-                "ETA": _format_hhmm(eta_iso) or "",
+                "ETA": _format_hhmm(eta_iso, tz) or "",
                 "ETAMinutes": minutes if minutes is not None else 0,
             }
         )
@@ -127,6 +248,12 @@ def _build_destinations(
         eta_iso = (linkprogress or {}).get("expectedArrivalTimeDestination")
         last_stop = _visible_stops(stops)[-1] if stops else None
         stop_idx = last_stop.get("number", -1) if last_stop else -1
+        if stop_idx < 0 and linkprogress:
+            following = linkprogress.get("followingStops") or []
+            if following:
+                stop_idx = following[-1].get("callSequenceNumber", -1)
+            elif linkprogress.get("callSequenceNumber") is not None:
+                stop_idx = int(linkprogress["callSequenceNumber"])
         add(display, stop_idx, eta_iso)
 
     if dest_list:
@@ -170,6 +297,51 @@ def _build_fs_connections(
     ]
 
 
+def _message_active(start: str | None, end: str | None, now: datetime | None = None) -> bool:
+    now = now or datetime.now(timezone.utc)
+    start_dt = _parse_iso_datetime(start)
+    end_dt = _parse_iso_datetime(end)
+    if start_dt and start_dt > now:
+        return False
+    if end_dt and end_dt < now:
+        return False
+    return True
+
+
+def _om_from_language_array(
+    messages: list[dict[str, Any]],
+    base_language: str,
+) -> tuple[str, str, dict[str, str] | None, dict[str, str] | None]:
+    heading_ml: dict[str, str] = {}
+    detail_ml: dict[str, str] = {}
+    for item in messages:
+        lang = str(item.get("language") or "")
+        if item.get("heading"):
+            heading_ml[lang] = str(item["heading"])
+        if item.get("body"):
+            detail_ml[lang] = str(item["body"])
+    heading = heading_ml.get(base_language) or (next(iter(heading_ml.values()), "") if heading_ml else "")
+    detail = detail_ml.get(base_language) or (next(iter(detail_ml.values()), "") if detail_ml else "")
+    return heading, detail, heading_ml or None, detail_ml or None
+
+
+def _build_om_entry(
+    message_type: int,
+    heading: str,
+    detail: str,
+    *,
+    heading_ml: dict[str, Any] | None = None,
+    detail_ml: dict[str, Any] | None = None,
+    valid_from: str = "",
+    valid_to: str = "",
+    base_language: str,
+) -> dict[str, Any]:
+    data = _multilanguage_fields(heading, detail, heading_ml, detail_ml, base_language)
+    data["ValidFrom"] = valid_from
+    data["ValidTo"] = valid_to
+    return {"MessageType": message_type, "MessageData": data}
+
+
 def _build_following_stop_row(
     stop: dict[str, Any],
     *,
@@ -179,6 +351,7 @@ def _build_following_stop_row(
     at_stop: bool,
     connections: list[dict[str, Any]],
     stop_pressed: bool,
+    tz: ZoneInfo,
 ) -> dict[str, Any]:
     minutes = _minutes_until(eta_iso)
     row: dict[str, Any] = {
@@ -194,7 +367,7 @@ def _build_following_stop_row(
     relative = _format_relative_minutes(minutes, show_now=show_now)
     if relative:
         row["Time"] = relative
-    arrival = _format_hhmm(eta_iso)
+    arrival = _format_hhmm(eta_iso, tz)
     if arrival:
         row["TimeArrival"] = arrival
     return row
@@ -206,15 +379,16 @@ def build_stopinfo_response(
 ) -> dict[str, Any]:
     journey = state_topics.get("journey") or {}
     linkprogress = state_topics.get("linkprogress") or {}
+    stopinfo = state_topics.get("stopinfo") or {}
     stop_list = state_topics.get("list/stops") or {}
     destination = state_topics.get("destination") or {}
     connections = state_topics.get("connections")
     dest_list = state_topics.get("list/destinations")
     stop_button = state_topics.get("sensors/stop_button") or {}
-    door = state_topics.get("sensors/door") or {}
 
+    tz = get_timezone(account.timezone)
     stops = _visible_stops(stop_list.get("stops") or [])
-    if not journey.get("lineNumber") and not stops:
+    if not journey.get("lineNumber") and not stops and not stopinfo.get("callSequenceNumber"):
         return {
             "FS": _empty_area("Following stops"),
             "LD": _empty_area(),
@@ -223,52 +397,41 @@ def build_stopinfo_response(
             "OM": _empty_area(),
         }
 
-    next_sequence = linkprogress.get("callSequenceNumber")
+    target_seq, at_stop = _resolve_fs_target(stopinfo or None)
+    next_sequence = target_seq
     if not next_sequence and stops:
         next_sequence = stops[0].get("number", 1)
 
-    distance = linkprogress.get("distance")
-    at_stop = distance == 0 or (door.get("doorOpen") is True)
-
-    following_rows: list[dict[str, Any]] = []
     fs_connections = _build_fs_connections(
         connections,
         mode=account.fs_connection_mode,
         max_connections=account.max_connections_per_stop,
     )
 
-    following_meta = {item.get("callSequenceNumber"): item for item in linkprogress.get("followingStops") or []}
-    start_idx = 0
-    for idx, stop in enumerate(stops):
-        if stop.get("number") == next_sequence:
-            start_idx = idx
-            break
+    following_rows = _build_following_rows(
+        stops=stops,
+        linkprogress=linkprogress,
+        target_seq=target_seq,
+        at_stop=at_stop,
+        max_stops=account.max_following_stops,
+        fs_connections=fs_connections,
+        stop_pressed=bool(stop_button.get("stopPressed")),
+        tz=tz,
+    )
 
-    for offset, stop in enumerate(stops[start_idx : start_idx + account.max_following_stops]):
-        seq = stop.get("number", start_idx + offset + 1)
-        meta = following_meta.get(seq, {})
-        eta_iso = meta.get("expectedArrivalTime") or stop.get("estimatedArrivalFull")
-        if offset == 0 and linkprogress.get("expectedArrivalTime"):
-            eta_iso = linkprogress.get("expectedArrivalTime")
-        following_rows.append(
-            _build_following_stop_row(
-                stop,
-                stop_idx=seq if isinstance(seq, int) else offset + 1,
-                eta_iso=eta_iso,
-                show_now=offset == 0,
-                at_stop=at_stop and offset == 0,
-                connections=fs_connections if offset == 0 else [],
-                stop_pressed=bool(stop_button.get("stopPressed")),
-            )
-        )
+    start_idx = _find_start_index(stops, target_seq) if stops and target_seq is not None else None
+    current_stop_name = ""
+    if start_idx is not None and start_idx < len(stops):
+        current_stop_name = stops[start_idx].get("name", "")
+    elif target_seq is not None:
+        stop = _stop_by_sequence(stops, target_seq)
+        current_stop_name = (stop or {}).get("name", "")
 
-    destinations = _build_destinations(destination, dest_list, linkprogress, stops)
+    destinations = _build_destinations(destination, dest_list, linkprogress, stops, tz)
     primary = destinations[0] if destinations else None
 
-    delay_seconds = linkprogress.get("delaySeconds") or 0
-    delay_min = int(delay_seconds // 60) if delay_seconds else 0
+    delay_min = _delay_minutes(linkprogress, stopinfo or None)
 
-    line = ""
     ext = destination.get("externalDisplay") or {} if destination else {}
     line = ext.get("lineNumber") or journey.get("lineNumber") or ""
 
@@ -293,8 +456,14 @@ def build_stopinfo_response(
         fs["ETA"] = primary["ETA"]
         fs["ETAMinutes"] = primary["ETAMinutes"]
 
-    ld = _build_ld_area(connections, stops, next_sequence)
-    om = _build_om_area(connections, state_topics.get("announcement"), account.base_language)
+    ld = _build_ld_area(connections, stops, next_sequence, stopinfo or None, tz)
+    om = _build_om_area(
+        connections,
+        state_topics.get("announcement"),
+        state_topics.get("list/announcements"),
+        account,
+        current_stop_name,
+    )
 
     return {
         "FS": fs,
@@ -305,15 +474,125 @@ def build_stopinfo_response(
     }
 
 
+def _ld_sequences_match(
+    conn_seq: int | None,
+    call_sequence: int | None,
+    stopinfo: dict[str, Any] | None,
+) -> bool:
+    if conn_seq is None:
+        return True
+    allowed: set[int] = set()
+    if call_sequence is not None:
+        allowed.add(int(call_sequence))
+    if stopinfo and stopinfo.get("callSequenceNumber") is not None:
+        allowed.add(int(stopinfo["callSequenceNumber"]))
+    if not allowed:
+        return True
+    return conn_seq in allowed
+
+
+def _parse_presented_departure_minutes(value: str) -> int | None:
+    """Parse MQTT presentedDepartureTimes values like '00:06' (minutes:seconds)."""
+    parts = value.strip().split(":")
+    if len(parts) != 2:
+        return None
+    try:
+        return int(parts[0]) * 60 + int(parts[1])
+    except ValueError:
+        return None
+
+
+def _departure_delay_seconds(planned: str | None, expected: str | None) -> int:
+    planned_dt = _parse_iso_datetime(planned)
+    expected_dt = _parse_iso_datetime(expected)
+    if planned_dt is None or expected_dt is None:
+        return 0
+    return max(0, int((expected_dt - planned_dt).total_seconds()))
+
+
+def _connection_departure_entries(conn: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize HSL departures[] or Vilnius next* / presentedDepartureTimes formats."""
+    departures = conn.get("departures")
+    if departures:
+        return list(departures[:5])
+
+    expected = conn.get("nextExpectedDepartureTime")
+    planned = conn.get("nextPlannedDepartureTime") or expected
+    presented = [str(v) for v in (conn.get("presentedDepartureTimes") or [])]
+
+    if presented:
+        entries: list[dict[str, Any]] = []
+        for idx, presented_value in enumerate(presented[:5]):
+            rel_min = _parse_presented_departure_minutes(presented_value)
+            if rel_min is None:
+                continue
+            entry: dict[str, Any] = {"_relative_minutes": rel_min, "_presented": presented_value}
+            if idx == 0 and (expected or planned):
+                entry["plannedDepartureTime"] = planned
+                entry["expectedDepartureTime"] = expected or planned
+                entry["departureDelaySeconds"] = (
+                    conn.get("departureDelaySeconds")
+                    if conn.get("departureDelaySeconds") is not None
+                    else _departure_delay_seconds(planned, expected)
+                )
+            entries.append(entry)
+        if entries:
+            return entries
+
+    if expected or planned:
+        return [
+            {
+                "plannedDepartureTime": planned,
+                "expectedDepartureTime": expected or planned,
+                "departureDelaySeconds": (
+                    conn.get("departureDelaySeconds")
+                    if conn.get("departureDelaySeconds") is not None
+                    else _departure_delay_seconds(planned, expected)
+                ),
+            }
+        ]
+
+    return []
+
+
+def _build_ld_departure_time(
+    dep: dict[str, Any],
+    tz: ZoneInfo,
+) -> tuple[str, dict[str, Any]]:
+    expected = dep.get("expectedDepartureTime") or dep.get("plannedDepartureTime")
+    planned = dep.get("plannedDepartureTime") or expected
+    rel_min = dep.get("_relative_minutes")
+    if rel_min is None:
+        rel_min = _minutes_until(expected)
+    rel = _format_relative_minutes(rel_min, show_now=False) or ""
+    absolute = _format_hhmm(expected, tz) or "" if expected else ""
+    planned_local = _format_hhmm(planned, tz) or "" if planned else ""
+    display = rel or absolute
+    return display, {
+        "PlannedTime": planned_local,
+        "Absolute": absolute,
+        "Relative": rel,
+        "Live": True,
+        "DelayMin": int((dep.get("departureDelaySeconds") or 0) // 60),
+        "Cancelled": False,
+        "StatusText": "",
+    }
+
+
 def _build_ld_area(
     connections_payload: dict[str, Any] | None,
     stops: list[dict[str, Any]],
     call_sequence: int | None,
+    stopinfo: dict[str, Any] | None,
+    tz: ZoneInfo,
 ) -> dict[str, Any]:
     if not connections_payload:
         return _empty_area()
 
-    if connections_payload.get("callSequenceNumber") not in (None, call_sequence):
+    conn_seq = connections_payload.get("callSequenceNumber")
+    if conn_seq is not None:
+        conn_seq = int(conn_seq)
+    if not _ld_sequences_match(conn_seq, call_sequence, stopinfo):
         return _empty_area()
 
     expiry = _parse_iso_datetime(connections_payload.get("expiryDateTime"))
@@ -324,25 +603,15 @@ def _build_ld_area(
     for conn in connections_payload.get("connections") or []:
         if conn.get("cancelled"):
             continue
-        departures = conn.get("departures") or []
+        departures = _connection_departure_entries(conn)
         times: list[str] = []
         times_extended: list[dict[str, Any]] = []
-        for dep in departures[:5]:
-            rel_min = _minutes_until(dep.get("expectedDepartureTime"))
-            rel = _format_relative_minutes(rel_min, show_now=False) or ""
-            times.append(rel)
-            times_extended.append(
-                {
-                    "PlannedTime": _format_hhmm(dep.get("plannedDepartureTime")) or "",
-                    "Absolute": _format_hhmm(dep.get("expectedDepartureTime")) or "",
-                    "Relative": rel,
-                    "Live": True,
-                    "DelayMin": int((dep.get("departureDelaySeconds") or 0) // 60),
-                    "Cancelled": False,
-                    "StatusText": "",
-                }
-            )
-        if not times and not conn.get("lineDesignation"):
+        for dep in departures:
+            display, extended = _build_ld_departure_time(dep, tz)
+            if display:
+                times.append(display)
+            times_extended.append(extended)
+        if not times and not times_extended and not conn.get("lineDesignation"):
             continue
         content.append(
             {
@@ -377,47 +646,90 @@ def _build_ld_area(
 def _build_om_area(
     connections_payload: dict[str, Any] | None,
     announcement: dict[str, Any] | None,
-    base_language: str,
+    announcements_queue: dict[str, Any] | None,
+    account: AccountConfig,
+    stop_name: str = "",
 ) -> dict[str, Any]:
     content: list[dict[str, Any]] = []
+    base_language = account.base_language
 
     if connections_payload:
         for msg in connections_payload.get("situationMessages") or []:
             content.append(
-                {
-                    "MessageType": 0,
-                    "MessageData": {
-                        "Heading": msg.get("heading", ""),
-                        "Detail": msg.get("body", ""),
-                        "ValidFrom": "",
-                        "ValidTo": "",
-                    },
-                }
+                _build_om_entry(
+                    2,
+                    str(msg.get("heading") or ""),
+                    str(msg.get("body") or ""),
+                    heading_ml=msg.get("heading_Multilanguage"),
+                    detail_ml=msg.get("body_Multilanguage"),
+                    valid_from=_iso_or_empty(msg.get("validFrom") or msg.get("start")),
+                    valid_to=_iso_or_empty(msg.get("validTo") or msg.get("end")),
+                    base_language=base_language,
+                )
+            )
+
+    if announcements_queue:
+        for msg in announcements_queue.get("messages") or []:
+            if not _message_active(msg.get("start"), msg.get("end")):
+                continue
+            lang_messages = msg.get("message") or []
+            if not lang_messages:
+                continue
+            heading, detail, heading_ml, detail_ml = _om_from_language_array(lang_messages, base_language)
+            if not heading and not detail:
+                continue
+            content.append(
+                _build_om_entry(
+                    2,
+                    heading,
+                    detail,
+                    heading_ml=heading_ml,
+                    detail_ml=detail_ml,
+                    valid_from=_iso_or_empty(msg.get("start")),
+                    valid_to=_iso_or_empty(msg.get("end")),
+                    base_language=base_language,
+                )
             )
 
     if announcement:
         messages = announcement.get("message") or []
-        chosen = next((m for m in messages if m.get("language") == base_language), None)
-        if chosen is None and messages:
-            chosen = messages[0]
-        if chosen:
+        if messages:
+            heading, detail, heading_ml, detail_ml = _om_from_language_array(messages, base_language)
+            if heading or detail:
+                content.append(
+                    _build_om_entry(
+                        0,
+                        heading,
+                        detail,
+                        heading_ml=heading_ml,
+                        detail_ml=detail_ml,
+                        valid_from=_iso_or_empty(announcement.get("start")),
+                        valid_to=_iso_or_empty(announcement.get("end")),
+                        base_language=base_language,
+                    )
+                )
+
+    if not content and account.inject_example_om_when_empty:
+        for example in account.example_om_messages:
             content.append(
-                {
-                    "MessageType": 0,
-                    "MessageData": {
-                        "Heading": chosen.get("heading", ""),
-                        "Detail": chosen.get("body", ""),
-                        "ValidFrom": "",
-                        "ValidTo": "",
-                    },
-                }
+                _build_om_entry(
+                    example.message_type,
+                    example.heading,
+                    example.detail,
+                    heading_ml=example.heading_multilanguage,
+                    detail_ml=example.detail_multilanguage,
+                    valid_from=example.valid_from,
+                    valid_to=example.valid_to,
+                    base_language=base_language,
+                )
             )
 
+    heading = f"Traffic info for {stop_name}" if stop_name and content else ("Traffic info" if content else "")
     return {
         "Count": len(content),
         "Content": content,
         "StatusCode": STATUS_OK if content else STATUS_NO_CONTENT,
-        "Heading": "Traffic info" if content else "",
+        "Heading": heading,
         "Display": -1,
         "Message": "",
     }

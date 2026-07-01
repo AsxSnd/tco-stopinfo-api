@@ -16,6 +16,7 @@ dependencies = [
     "aiomqtt>=2.3.0",
     "orjson>=3.10.0",
     "PyYAML>=6.0.2",
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]

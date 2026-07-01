@@ -48,13 +48,27 @@ class CacheConfig(BaseModel):
     fast_response_seconds: int = 10
     vehicle_ttl_seconds: int = 7200
     http_cache_max_age: int = 30
+    journey_stopinfo_ttl_seconds: int = 30
+
+
+class ExampleOmMessageConfig(BaseModel):
+    message_type: int = 2
+    heading: str = ""
+    detail: str = ""
+    heading_multilanguage: dict[str, str] | None = None
+    detail_multilanguage: dict[str, str] | None = None
+    valid_from: str = ""
+    valid_to: str = ""
 
 
 class AccountConfig(BaseModel):
     base_language: str = "fi"
+    timezone: str = "UTC"
     max_following_stops: int = 5
     max_connections_per_stop: int = 3
     fs_connection_mode: str = "compact"
+    inject_example_om_when_empty: bool = False
+    example_om_messages: list[ExampleOmMessageConfig] = Field(default_factory=list)
 
 
 class AppConfig(BaseModel):

@@ -1,4 +1,4 @@
-# Copy to /etc/tco-stopinfo-api/config.yaml on the server.
+# Copy to config.yaml (local) or /etc/tco-stopinfo-api/config.yaml (Linux).
 
 http:
   host: "0.0.0.0"
@@ -15,29 +15,42 @@ mqtt:
   client_id: "tco-stopinfo-api"
   reconnect_seconds: 5
 
-  # --- Topic layout (read docs/mqtt-topic-layout.md) ---
-  #
-  # Vilnius-style broker tree:
-  #   vilniustest/{vehicle_id}/pis/0/journey
-  #   vilniustest/{vehicle_id}/pis/0/linkprogress
-  #   vilniustest/{vehicle_id}/pis/0/list/stops
-  #   ...
+  # Vilnius broker tree: vilniustest/{vehicle_id}/pis/0/journey
   root: "vilniustest"
   topic_prefix: "pis"
   pis_instance: "0"
-
-  # Legacy flat layout (leave root empty):
-  #   pis/{vehicle_id}/journey
-  # root: ""
 
 cache:
   fast_response_seconds: 10
   vehicle_ttl_seconds: 7200
   http_cache_max_age: 30
+  journey_stopinfo_ttl_seconds: 30
 
 accounts:
-  hsl:
-    base_language: "fi"
+  vilnius:
+    base_language: "lt"
+    timezone: "Europe/Vilnius"
     max_following_stops: 5
     max_connections_per_stop: 3
     fs_connection_mode: "compact"
+    # When no MQTT OM data is available, inject these messages for display testing.
+    inject_example_om_when_empty: true
+    example_om_messages:
+      - message_type: 2
+        heading: "Eismo informacija"
+        detail: "Bandomasis pranešimas ekranų testavimui."
+        heading_multilanguage:
+          lt: "Eismo informacija"
+          en: "Traffic information"
+        detail_multilanguage:
+          lt: "Bandomasis pranešimas ekranų testavimui."
+          en: "Sample message for display testing."
+      - message_type: 2
+        heading: "Planuojami darbai"
+        detail: "Gatvės remonto darbai gali sukelti vėlavimų."
+        heading_multilanguage:
+          lt: "Planuojami darbai"
+          en: "Planned works"
+        detail_multilanguage:
+          lt: "Gatvės remonto darbai gali sukelti vėlavimų."
+          en: "Road works may cause delays."

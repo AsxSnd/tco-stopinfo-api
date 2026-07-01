@@ -58,13 +58,37 @@ sudo systemctl status tco-stopinfo-api
 ## nginx + TLS (recommended)
 
 ```bash
-sudo apt install nginx certbot python3-certbot-nginx
+sudo apt install nginx
 sudo cp deploy/nginx.conf.example /etc/nginx/sites-available/tco-stopinfo-api
 # Edit server_name and upstream
 sudo ln -s /etc/nginx/sites-available/tco-stopinfo-api /etc/nginx/sites-enabled/
 sudo certbot --nginx -d stopinfo.example.com
 sudo nginx -t && sudo systemctl reload nginx
 ```
+
+### Vilnius lab (wildcard cert)
+
+Host name: **`stopinfo.vilnius.stjernberg.lab.suite.luminator.com`**  
+Certificate: **`*.stjernberg.lab.suite.luminator.com`**
+
+1. DNS: create an **A** or **CNAME** record for `stopinfo.vilnius.stjernberg.lab.suite.luminator.com` → nginx server IP (or CDN origin).
+2. Install the wildcard cert on the nginx host (paths depend on your PKI).
+3. Use `deploy/nginx-vilnius-stjernberg.conf.example` — copy, adjust `ssl_certificate` paths, enable the site.
+4. Bind the app to localhost only:
+
+```yaml
+http:
+  host: "127.0.0.1"
+  port: 8084
+```
+
+Public URL example:
+
+```text
+https://stopinfo.vilnius.stjernberg.lab.suite.luminator.com/api/stopinfo/vilnius/1721
+```
+
+If a CDN terminates TLS in front of nginx, origin can stay HTTP on a private network; ensure `/api/stopinfo/` is not cached aggressively (honour app `Cache-Control: max-age=30` or bypass cache).
 
 Set in `config.yaml`:
 
