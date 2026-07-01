@@ -1,0 +1,62 @@
+# Example nginx reverse proxy for TCO Stopinfo API on Linux.
+#
+# Recommended topology:
+#   Internet -> nginx (TLS, optional rate limit) -> uvicorn (127.0.0.1:8084)
+#
+# nginx handles:
+#   - TLS termination (certbot / Let's Encrypt)
+#   - HTTP/2
+#   - Optional load balancing across multiple app instances
+#   - Static health checks
+#
+# The Python app handles:
+#   - Business logic and per-vehicle response cache
+#   - MQTT ingestion
+
+upstream tco_stopinfo_backend {
+    # Single instance (default — in-memory cache):
+    server 127.0.0.1:8084;
+
+    # Horizontal scale (requires shared cache — see docs/service-architecture.md):
+    # server 127.0.0.1:8085;
+    # server 127.0.0.1:8086;
+    # least_conn;   # or ip_hash for sticky sessions (less important with cached GETs)
+}
+
+server {
+    listen 443 ssl http2;
+    server_name stopinfo.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/stopinfo.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/stopinfo.example.com/privkey.pem;
+
+    # Optional: limit abusive clients (per IP)
+    limit_req_zone $binary_remote_addr zone=stopinfo:10m rate=50r/s;
+    limit_req zone=stopinfo burst=100 nodelay;
+
+    location /health {
+        proxy_pass http://tco_stopinfo_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+    }
+
+    location /api/stopinfo/ {
+        proxy_pass http://tco_stopinfo_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Do not buffer — responses are small and already cached in the app
+        proxy_buffering off;
+        proxy_read_timeout 5s;
+        proxy_connect_timeout 2s;
+    }
+}
+
+server {
+    listen 80;
+    server_name stopinfo.example.com;
+    return 301 https://$host$request_uri;
+}

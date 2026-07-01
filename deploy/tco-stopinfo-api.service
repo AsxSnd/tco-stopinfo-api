@@ -1,0 +1,26 @@
+[Unit]
+Description=TCO Stopinfo API (MQTT to HTTP)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tco
+Group=tco
+WorkingDirectory=/opt/tco-stopinfo-api
+Environment=TCO_CONFIG_FILE=/etc/tco-stopinfo-api/config.yaml
+ExecStart=/opt/tco-stopinfo-api/.venv/bin/tco-stopinfo-api -c /etc/tco-stopinfo-api/config.yaml
+Restart=on-failure
+RestartSec=5
+# Allow many concurrent connections from on-board displays
+LimitNOFILE=65535
+
+# Hardening (adjust if needed)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/tco-stopinfo-api
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
