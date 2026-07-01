@@ -22,8 +22,26 @@ class MqttConfig(BaseModel):
     username: str | None = None
     password: str | None = None
     client_id: str = "tco-stopinfo-api"
-    topic_prefix: str = "pis"
     reconnect_seconds: int = 5
+    # Broker root segment, e.g. "vilniustest". Empty = legacy flat layout (pis/{vehicle}/...).
+    root: str = ""
+    # PIS path segment from MQTT-PIS-PT spec (usually "pis").
+    topic_prefix: str = "pis"
+    # Instance id from spec placeholder pis/0/... (usually "0" on the vehicle).
+    pis_instance: str = "0"
+
+    def subscription_topic(self, suffix: str) -> str:
+        """MQTT subscribe filter for one PIS suffix."""
+        if self.root:
+            return f"{self.root}/+/{self.topic_prefix}/{self.pis_instance}/{suffix}"
+        return f"{self.topic_prefix}/+/{suffix}"
+
+    def describe_layout(self) -> str:
+        if self.root:
+            return (
+                f"{self.root}/{{vehicle}}/{self.topic_prefix}/{self.pis_instance}/{{suffix}}"
+            )
+        return f"{self.topic_prefix}/{{vehicle}}/{{suffix}}"
 
 
 class CacheConfig(BaseModel):

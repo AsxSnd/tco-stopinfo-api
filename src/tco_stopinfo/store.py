@@ -10,6 +10,7 @@ TOPIC_SUFFIXES = (
     "journey",
     "destination",
     "linkprogress",
+    "stopinfo",
     "list/stops",
     "connections",
     "journeystate",

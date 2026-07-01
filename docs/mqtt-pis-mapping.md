@@ -4,17 +4,38 @@ This service subscribes to **MQTT-PIS-PT V1.6.0** topics (see `docs/mqtt-pis-pt-
 
 ## Topic naming
 
-The specification uses `pis/0/...` where `0` is a placeholder for the **vehicle id** (same id as the `{vehicle}` path segment in HTTP).
+See **[mqtt-topic-layout.md](mqtt-topic-layout.md)** for full broker tree examples.
+
+### Vilnius-style layout (broker root + vehicle + spec)
+
+```
+vilniustest/{vehicle_id}/pis/0/{suffix}
+```
+
+| MQTT topic | Example (vehicle 1232) |
+|------------|------------------------|
+| `{root}/{vehicle_id}/pis/0/journey` | `vilniustest/1232/pis/0/journey` |
+| `{root}/{vehicle_id}/pis/0/linkprogress` | `vilniustest/1232/pis/0/linkprogress` |
+| `{root}/{vehicle_id}/pis/0/list/stops` | `vilniustest/1232/pis/0/list/stops` |
+
+Config:
+
+```yaml
+mqtt:
+  root: "vilniustest"
+  topic_prefix: "pis"
+  pis_instance: "0"
+```
+
+Subscriptions: `vilniustest/+/pis/0/journey`, etc.
+
+### Flat layout (legacy)
 
 | MQTT topic | Example |
 |------------|---------|
 | `{prefix}/{vehicle_id}/journey` | `pis/1232/journey` |
-| `{prefix}/{vehicle_id}/linkprogress` | `pis/1232/linkprogress` |
-| `{prefix}/{vehicle_id}/list/stops` | `pis/1232/list/stops` |
 
-`topic_prefix` defaults to `pis` (config: `mqtt.topic_prefix`).
-
-The service subscribes with wildcards: `pis/+/journey`, `pis/+/linkprogress`, etc.
+Set `mqtt.root: ""` and `topic_prefix: pis`.
 
 ## Subscribed topics
 

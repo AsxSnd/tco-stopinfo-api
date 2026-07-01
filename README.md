@@ -33,6 +33,7 @@ curl http://localhost:8084/api/stopinfo/hsl/1232
 | Document | Description |
 |----------|-------------|
 | [docs/tco-stopinfo-api-spec.md](docs/tco-stopinfo-api-spec.md) | HTTP API layout specification |
+| [docs/mqtt-topic-layout.md](docs/mqtt-topic-layout.md) | MQTT broker tree (`vilniustest/{vehicle}/pis/0/...`) |
 | [docs/mqtt-pis-mapping.md](docs/mqtt-pis-mapping.md) | MQTT-PIS-PT → TCO JSON field mapping |
 | [docs/mqtt-pis-pt-specification.md](docs/mqtt-pis-pt-specification.md) | Source MQTT protocol (V1.6.0) |
 | [docs/service-architecture.md](docs/service-architecture.md) | Caching, performance, nginx guidance |

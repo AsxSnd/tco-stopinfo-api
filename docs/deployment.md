@@ -33,7 +33,9 @@ sudo nano /etc/tco-stopinfo-api/config.yaml
 | `http.workers` | Keep **1** (in-memory cache) |
 | `mqtt.broker` | MQTT hostname |
 | `mqtt.port` | Usually 1883 or 8883 (TLS) |
-| `mqtt.topic_prefix` | Default `pis` |
+| `mqtt.root` | Broker root segment, e.g. **`vilniustest`** (see `docs/mqtt-topic-layout.md`) |
+| `mqtt.topic_prefix` | PIS segment, usually **`pis`** |
+| `mqtt.pis_instance` | Spec placeholder, usually **`0`** → topics like `.../pis/0/journey` |
 | `cache.fast_response_seconds` | Dedup window for identical vehicle polls (default 10) |
 | `cache.vehicle_ttl_seconds` | Remove idle vehicles from RAM |
 | `accounts.{name}` | Per-account limits (`hsl`, etc.) |

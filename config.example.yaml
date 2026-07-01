@@ -1,32 +1,38 @@
-# Copy to config.yaml and adjust for your environment.
+# Copy to /etc/tco-stopinfo-api/config.yaml on the server.
 
 http:
   host: "0.0.0.0"
   port: 8084
-  # Bind directly on the app process. Put TLS and load balancing in nginx (see deploy/nginx.conf.example).
   workers: 1
   log_level: "info"
 
 mqtt:
   broker: "mqtt.example.com"
   port: 1883
-  # TLS (optional)
   tls: false
   # username: ""
   # password: ""
   client_id: "tco-stopinfo-api"
-  # Topic layout: {topic_prefix}/{vehicle_id}/journey  (see docs/mqtt-pis-mapping.md)
-  topic_prefix: "pis"
-  # Wildcard subscription: pis/+/journey, pis/+/linkprogress, ...
   reconnect_seconds: 5
 
+  # --- Topic layout (read docs/mqtt-topic-layout.md) ---
+  #
+  # Vilnius-style broker tree:
+  #   vilniustest/{vehicle_id}/pis/0/journey
+  #   vilniustest/{vehicle_id}/pis/0/linkprogress
+  #   vilniustest/{vehicle_id}/pis/0/list/stops
+  #   ...
+  root: "vilniustest"
+  topic_prefix: "pis"
+  pis_instance: "0"
+
+  # Legacy flat layout (leave root empty):
+  #   pis/{vehicle_id}/journey
+  # root: ""
+
 cache:
-  # Per-vehicle HTTP response cache (pre-serialized JSON bytes).
-  # Rebuilt when any subscribed MQTT topic for that vehicle changes.
   fast_response_seconds: 10
-  # Drop vehicle state after no MQTT updates (frees memory).
   vehicle_ttl_seconds: 7200
-  # HTTP Cache-Control max-age sent to clients (matches legacy TCO service).
   http_cache_max_age: 30
 
 accounts:
@@ -34,4 +40,4 @@ accounts:
     base_language: "fi"
     max_following_stops: 5
     max_connections_per_stop: 3
-    fs_connection_mode: "compact"  # none | compact | detailed
+    fs_connection_mode: "compact"
