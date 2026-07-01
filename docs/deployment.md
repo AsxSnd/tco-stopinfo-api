@@ -12,16 +12,46 @@
 ```bash
 sudo useradd --system --home /opt/tco-stopinfo-api --shell /usr/sbin/nologin tco
 sudo mkdir -p /opt/tco-stopinfo-api /etc/tco-stopinfo-api
-cd /opt/tco-stopinfo-api
 
-# Copy project files (git clone or rsync)
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/pip install -e .
+# Copy project files (git clone or rsync) into /opt/tco-stopinfo-api
+sudo chown -R tco:tco /opt/tco-stopinfo-api
+
+sudo -u tco bash -c 'cd /opt/tco-stopinfo-api && \
+  python3 -m venv .venv && \
+  .venv/bin/pip install --upgrade pip && \
+  .venv/bin/pip install -r requirements.txt && \
+  .venv/bin/pip install .'
 
 sudo cp config.example.yaml /etc/tco-stopinfo-api/config.yaml
+sudo chown tco:tco /etc/tco-stopinfo-api/config.yaml
 # Edit broker, port, accounts
 sudo nano /etc/tco-stopinfo-api/config.yaml
+```
+
+Use `pip install .` (not `-e .`) on production servers — editable installs write metadata under `src/` and often fail when ownership or permissions are mixed.
+
+### Install error: `Cannot update time stamp of directory 'src/...egg-info'`
+
+Usually caused by leftover build metadata or mixed root/`tco` ownership (e.g. venv created as root, or files copied from another machine).
+
+```bash
+sudo rm -rf /opt/tco-stopinfo-api/src/*.egg-info \
+           /opt/tco-stopinfo-api/build \
+           /opt/tco-stopinfo-api/dist
+sudo chown -R tco:tco /opt/tco-stopinfo-api
+
+sudo -u tco bash -c 'cd /opt/tco-stopinfo-api && \
+  .venv/bin/pip install .'
+```
+
+If the venv was created as root, recreate it as `tco`:
+
+```bash
+sudo rm -rf /opt/tco-stopinfo-api/.venv
+sudo -u tco bash -c 'cd /opt/tco-stopinfo-api && \
+  python3 -m venv .venv && \
+  .venv/bin/pip install -r requirements.txt && \
+  .venv/bin/pip install .'
 ```
 
 ## Configuration
@@ -112,6 +142,33 @@ sudo ufw allow 22/tcp
 
 On other distributions, use `firewalld`, `iptables`, or your provider's network firewall the same way.
 
+## MQTT disconnect loop
+
+Log pattern:
+
+```text
+MQTT connected ...
+MQTT error: Disconnected during message iteration — reconnecting in 5s
+```
+
+**Common causes:**
+
+1. **Retained message burst blocking the event loop** (fixed in recent versions — rebuild runs in a thread pool). Upgrade and restart.
+2. **Second client using the same MQTT username** — stop the Windows dev instance if it uses the same broker credentials. Some brokers allow only one session per user.
+3. **Duplicate `client_id`** — each instance uses `{client_id}-{hostname}-{pid}-{port}`; check `/health` → `mqtt.client_id`.
+
+**Checks:**
+
+```bash
+curl -s http://127.0.0.1:8184/health | jq .mqtt
+# connected: true, messages_received increasing
+
+sudo journalctl -u tco-stopinfo-api -n 30 --no-pager
+# Should show client_id=... and no repeated disconnects
+```
+
+If disconnects continue after upgrade, verify broker ACL allows subscribe to `vilniustest/+/pis/0/#` and that no other service uses the same MQTT user.
+
 ## Verify
 
 ```bash
@@ -138,8 +195,10 @@ Mount config and run behind nginx on the host for TLS.
 
 ```bash
 cd /opt/tco-stopinfo-api
-git pull   # or rsync
-.venv/bin/pip install -r requirements.txt
+sudo chown -R tco:tco .
+sudo -u tco git pull   # or rsync
+sudo rm -rf src/*.egg-info build dist
+sudo -u tco bash -c '.venv/bin/pip install -r requirements.txt && .venv/bin/pip install .'
 sudo systemctl restart tco-stopinfo-api
 ```
 

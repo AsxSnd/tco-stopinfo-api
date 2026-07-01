@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import socket
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -26,12 +27,14 @@ logger = logging.getLogger(__name__)
 class ApplicationState:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
+        host_tag = socket.gethostname().split(".")[0]
         self.config.mqtt.client_id = (
-            f"{config.mqtt.client_id}-{os.getpid()}-{config.http.port}"
+            f"{config.mqtt.client_id}-{host_tag}-{os.getpid()}-{config.http.port}"
         )
         self.store = VehicleStore(vehicle_ttl_seconds=config.cache.vehicle_ttl_seconds)
         self._stop_event = asyncio.Event()
         self._mqtt_task: asyncio.Task | None = None
+        self._mqtt_service: MqttIngestService | None = None
         self._mqtt_thread: MqttThreadIngestService | None = None
         self._purge_task: asyncio.Task | None = None
 
@@ -141,8 +144,12 @@ class ApplicationState:
             )
             self._mqtt_thread.start()
         else:
-            mqtt = MqttIngestService(self.config, self.store, self.rebuild_vehicle)
-            self._mqtt_task = asyncio.create_task(mqtt.run(self._stop_event))
+            self._mqtt_service = MqttIngestService(
+                self.config, self.store, self.rebuild_vehicle
+            )
+            self._mqtt_task = asyncio.create_task(
+                self._mqtt_service.run(self._stop_event)
+            )
 
         self._purge_task = asyncio.create_task(purge_loop())
 
@@ -189,6 +196,10 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         if state._mqtt_thread is not None:
             mqtt_info["connected"] = state._mqtt_thread.connected
             mqtt_info["messages_received"] = state._mqtt_thread.messages_received
+        elif state._mqtt_service is not None:
+            mqtt_info["connected"] = state._mqtt_service.connected
+            mqtt_info["messages_received"] = state._mqtt_service.messages_received
+        mqtt_info["client_id"] = state.config.mqtt.client_id
         return {
             "status": "ok",
             "http_port": state.config.http.port,

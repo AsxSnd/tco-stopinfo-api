@@ -66,6 +66,10 @@ class MqttIngestService:
         self._store = store
         self._on_vehicle_updated = on_vehicle_updated
         self._mqtt = config.mqtt
+        self._rebuild_sem = asyncio.Semaphore(4)
+        self._rebuild_tasks: dict[str, asyncio.Task[None]] = {}
+        self.connected = False
+        self.messages_received = 0
 
     def _parse_topic(self, topic: str) -> tuple[str, str] | None:
         return parse_mqtt_topic(topic, self._mqtt)
@@ -78,6 +82,24 @@ class MqttIngestService:
         except orjson.JSONDecodeError:
             logger.warning("Invalid JSON payload (%d bytes)", len(payload))
             return None
+
+    async def _rebuild_vehicle(self, vehicle_id: str) -> None:
+        async with self._rebuild_sem:
+            await asyncio.to_thread(self._on_vehicle_updated, vehicle_id)
+
+    def _schedule_rebuild(self, vehicle_id: str) -> None:
+        existing = self._rebuild_tasks.get(vehicle_id)
+        if existing is not None and not existing.done():
+            return
+
+        async def run() -> None:
+            try:
+                await asyncio.sleep(0.05)
+                await self._rebuild_vehicle(vehicle_id)
+            finally:
+                self._rebuild_tasks.pop(vehicle_id, None)
+
+        self._rebuild_tasks[vehicle_id] = asyncio.create_task(run())
 
     async def run(self, stop_event: asyncio.Event) -> None:
         mqtt_cfg = self._config.mqtt
@@ -94,12 +116,14 @@ class MqttIngestService:
                     password=mqtt_cfg.password,
                     identifier=mqtt_cfg.client_id,
                 ) as client:
+                    self.connected = True
                     for topic, qos in subscriptions:
                         await client.subscribe(topic, qos=qos)
                     logger.info(
-                        "MQTT connected to %s:%s layout=%s (%d subscriptions)",
+                        "MQTT connected to %s:%s client_id=%s layout=%s (%d subscriptions)",
                         mqtt_cfg.broker,
                         mqtt_cfg.port,
+                        mqtt_cfg.client_id,
                         mqtt_cfg.describe_layout(),
                         len(subscriptions),
                     )
@@ -110,6 +134,7 @@ class MqttIngestService:
                     async for message in client.messages:
                         if stop_event.is_set():
                             break
+                        self.messages_received += 1
                         parsed = self._parse_topic(str(message.topic))
                         if parsed is None:
                             continue
@@ -119,9 +144,12 @@ class MqttIngestService:
                             continue
                         changed = self._store.update_topic(vehicle_id, suffix, payload)
                         if changed:
-                            self._on_vehicle_updated(vehicle_id)
+                            self._schedule_rebuild(vehicle_id)
             except aiomqtt.MqttError as exc:
+                self.connected = False
                 if stop_event.is_set():
                     break
                 logger.error("MQTT error: %s — reconnecting in %ss", exc, mqtt_cfg.reconnect_seconds)
                 await asyncio.sleep(mqtt_cfg.reconnect_seconds)
+            finally:
+                self.connected = False
