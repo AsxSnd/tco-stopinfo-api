@@ -96,7 +96,56 @@ sudo certbot --nginx -d stopinfo.example.com
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-### Vilnius lab (wildcard cert)
+### Vilnius lab (HTTP only — no TLS)
+
+Host name: **`stopinfo.vilnius.stjernberg.lab.suite.luminator.com`**
+
+1. DNS: **A** or **CNAME** → nginx server IP.
+2. App binds to localhost:
+
+```yaml
+http:
+  host: "127.0.0.1"
+  port: 8184
+```
+
+3. Enable nginx site:
+
+```bash
+sudo apt install nginx
+sudo cp deploy/nginx-vilnius-stjernberg-http.conf.example \
+  /etc/nginx/sites-available/stopinfo-vilnius
+sudo ln -sf /etc/nginx/sites-available/stopinfo-vilnius /etc/nginx/sites-enabled/
+```
+
+Long hostnames (`stopinfo.vilnius.stjernberg.lab.suite.luminator.com`) require a larger hash bucket in `/etc/nginx/nginx.conf` inside the `http { }` block:
+
+```nginx
+server_names_hash_bucket_size 128;
+```
+
+Then:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+sudo ufw allow 80/tcp
+```
+
+Public URL:
+
+```text
+http://stopinfo.vilnius.stjernberg.lab.suite.luminator.com/api/stopinfo/vilnius/1721
+```
+
+Verify:
+
+```bash
+curl -s http://stopinfo.vilnius.stjernberg.lab.suite.luminator.com/health | jq .
+```
+
+TLS can be added later with `deploy/nginx-vilnius-stjernberg.conf.example` when a certificate is ready.
+
+### Vilnius lab (HTTPS with existing cert)
 
 Host name: **`stopinfo.vilnius.stjernberg.lab.suite.luminator.com`**  
 Certificate: **`*.stjernberg.lab.suite.luminator.com`**

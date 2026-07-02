@@ -170,6 +170,15 @@ class ApplicationState:
 def create_app(config: AppConfig | None = None) -> FastAPI:
     app_config = config or load_config()
     state = ApplicationState(app_config)
+    config_path = getattr(app_config, "_config_path", "unknown")
+    for name, account in app_config.accounts.items():
+        logger.info(
+            "Account %s: inject_example_om_when_empty=%s example_om_messages=%d",
+            name,
+            account.inject_example_om_when_empty,
+            len(account.example_om_messages),
+        )
+    logger.info("Loaded config from %s", config_path)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -203,7 +212,15 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         return {
             "status": "ok",
             "http_port": state.config.http.port,
+            "config_file": getattr(state.config, "_config_path", None),
             "accounts_configured": list(state.config.accounts.keys()),
+            "accounts": {
+                name: {
+                    "inject_example_om_when_empty": cfg.inject_example_om_when_empty,
+                    "example_om_messages": len(cfg.example_om_messages),
+                }
+                for name, cfg in state.config.accounts.items()
+            },
             "mqtt": mqtt_info,
             "cache": cache_stats,
         }

@@ -134,7 +134,7 @@ def _build_following_rows(
         rows.append(
             _build_following_stop_row(
                 stop,
-                stop_idx=start_idx + offset,
+                stop_idx=seq,
                 eta_iso=eta_iso,
                 show_now=offset == 0,
                 at_stop=at_stop and offset == 0,
@@ -389,12 +389,19 @@ def build_stopinfo_response(
     tz = get_timezone(account.timezone)
     stops = _visible_stops(stop_list.get("stops") or [])
     if not journey.get("lineNumber") and not stops and not stopinfo.get("callSequenceNumber"):
+        om = _build_om_area(
+            connections,
+            state_topics.get("announcement"),
+            state_topics.get("list/announcements"),
+            account,
+            "",
+        )
         return {
             "FS": _empty_area("Following stops"),
             "LD": _empty_area(),
             "TD": _empty_area(),
             "MD": _empty_area(),
-            "OM": _empty_area(),
+            "OM": om,
         }
 
     target_seq, at_stop = _resolve_fs_target(stopinfo or None)
@@ -643,6 +650,19 @@ def _build_ld_area(
     }
 
 
+def _om_entry_has_text(entry: dict[str, Any]) -> bool:
+    data = entry.get("MessageData") or {}
+    if data.get("Heading") or data.get("Detail"):
+        return True
+    heading_ml = data.get("Heading_Multilanguage") or {}
+    detail_ml = data.get("Detail_Multilanguage") or {}
+    return bool(heading_ml or detail_ml)
+
+
+def _filter_om_content(content: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [entry for entry in content if _om_entry_has_text(entry)]
+
+
 def _build_om_area(
     connections_payload: dict[str, Any] | None,
     announcement: dict[str, Any] | None,
@@ -655,11 +675,15 @@ def _build_om_area(
 
     if connections_payload:
         for msg in connections_payload.get("situationMessages") or []:
+            heading = str(msg.get("heading") or "")
+            detail = str(msg.get("body") or "")
+            if not heading and not detail and not msg.get("heading_Multilanguage") and not msg.get("body_Multilanguage"):
+                continue
             content.append(
                 _build_om_entry(
                     2,
-                    str(msg.get("heading") or ""),
-                    str(msg.get("body") or ""),
+                    heading,
+                    detail,
                     heading_ml=msg.get("heading_Multilanguage"),
                     detail_ml=msg.get("body_Multilanguage"),
                     valid_from=_iso_or_empty(msg.get("validFrom") or msg.get("start")),
@@ -708,6 +732,8 @@ def _build_om_area(
                         base_language=base_language,
                     )
                 )
+
+    content = _filter_om_content(content)
 
     if not content and account.inject_example_om_when_empty:
         for example in account.example_om_messages:

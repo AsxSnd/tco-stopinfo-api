@@ -100,7 +100,7 @@ def test_build_fs_from_mqtt_sample() -> None:
     assert fs["StatusCode"] == 200
     assert fs["Count"] == 2
     assert fs["Content"][0]["Name"] == "Leppäsuonkatu"
-    assert fs["Content"][0]["StopIdx"] == 1
+    assert fs["Content"][0]["StopIdx"] == 2
     assert fs["Content"][0]["AtStop"] is False
 
 
@@ -126,7 +126,7 @@ def test_vilnius_departure_17_shows_stops_18_to_22() -> None:
     assert fs["StatusCode"] == 200
     assert fs["Count"] == 5
     assert fs["Content"][0]["Name"] == "Operos ir baleto teatras"
-    assert fs["Content"][0]["StopIdx"] == 17
+    assert fs["Content"][0]["StopIdx"] == 18
     assert fs["Content"][0]["AtStop"] is False
     assert fs["Content"][1]["Name"] == "Kražių st."
     assert fs["DelayMin"] == 2
@@ -152,7 +152,7 @@ def test_build_fs_at_stop_uses_stopinfo_arrival() -> None:
 
     assert fs["DelayMin"] == 9
     assert fs["Content"][0]["AtStop"] is True
-    assert fs["Content"][0]["StopIdx"] == 0
+    assert fs["Content"][0]["StopIdx"] == 1
     assert fs["Content"][0]["Name"] == "Pohjois-Haagan asema"
 
 
@@ -212,7 +212,7 @@ def test_partial_stop_list_update_still_returns_five_following_stops() -> None:
     app.rebuild_vehicle("1733", accounts=["vilnius"])
     fs = orjson.loads(app.store.get_response("vilnius", "1733", fast_response_seconds=0).body)["FS"]
     assert fs["Count"] == 5
-    assert fs["Content"][0]["StopIdx"] == 17
+    assert fs["Content"][0]["StopIdx"] == 18
 
 
 def test_journey_cache_pairs_stopinfo_with_cached_stop_list() -> None:

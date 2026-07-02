@@ -97,10 +97,12 @@ def load_config(path: str | Path | None = None) -> AppConfig:
             name: AccountConfig(**values)
             for name, values in (raw.get("accounts") or {}).items()
         }
-        return AppConfig(
+        app_config = AppConfig(
             http=HttpConfig(**(raw.get("http") or {})),
             mqtt=MqttConfig(**(raw.get("mqtt") or {})),
             cache=CacheConfig(**(raw.get("cache") or {})),
             accounts=accounts or {"hsl": AccountConfig()},
         )
+        app_config._config_path = str(config_path.resolve())  # type: ignore[attr-defined]
+        return app_config
     return AppConfig()

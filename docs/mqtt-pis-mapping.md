@@ -107,7 +107,7 @@ Example messages are only used when no live OM data is present from MQTT (`conne
 | `DestinationExtended[]` | `destination`, `list/destinations` | One row per unique destination |
 | `DestinationExtended[].DestinationStopIdx` | Last stop in `list/stops` | `stops[].number` |
 | `Content[].Name` | `list/stops.stops[].name` | Skip `blind` stops |
-| `Content[].StopIdx` | Index in visible stop list | 0-based array index |
+| `Content[].StopIdx` | `list/stops.stops[].number` | Call sequence (same as MQTT `callSequenceNumber`) |
 | `Content[].TariffZone` | `stops[].zoneCode` → `stops[].zone` | String |
 | `Content[].Time` | `linkprogress.followingStops[].expectedArrivalTime` or stop ETA | `"N min"`, `"Now"`, `"1 min"` |
 | `Content[].TimeArrival` | Same ISO time | Local `hh:mm` (`accounts.*.timezone`) |
