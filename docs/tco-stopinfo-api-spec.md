@@ -65,11 +65,13 @@ Each area is independent. HTTP status is always **200**; per-area status is in `
 |--------|---------|---------|
 | `X.TC-FS` | `200,-1` | FS area status + legacy flag |
 | `X.TC-LD` | `204,0` | LD area |
-| `X.TC-TD` | `204,0` | TD area |
 | `X.TC-MD` | `204,0` | MD area |
 | `X.TC-OM` | `204,0` | OM area |
+| `X.TC-TD` | `204,0` | TD area |
 | `Cache-Control` | `max-age=30` | Client cache hint |
 | `Date` | GMT timestamp | Response time |
+
+`X.TC-*` headers are sent in this order: **FS, LD, MD, OM, TD** (TD last).
 
 Second header value: `0` when area `StatusCode` is 204, else `-1`.
 

@@ -8,6 +8,7 @@ import sys
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from typing import Any
 
 import orjson
 from fastapi import FastAPI, Request, Response
@@ -66,14 +67,81 @@ class ApplicationState:
         """Fill missing stopinfo/list/stops from a direct MQTT read (retained topics)."""
         if self._fs_inputs_ready(vehicle_id):
             return
-        fetched = fetch_vehicle_topics(self.config.mqtt, vehicle_id)
+
+        state = self.store.get_state(vehicle_id)
+        now = time.time()
+        cooldown = self.config.cache.mqtt_fetch_cooldown_seconds
+
+        # Background ingest already received retained/live topics for this vehicle.
+        if state is not None and state.topics:
+            return
+
+        if state is not None and state.mqtt_fetch_at and now - state.mqtt_fetch_at < cooldown:
+            return
+
+        fetched = fetch_vehicle_topics(
+            self.config.mqtt,
+            vehicle_id,
+            connect_timeout=self.config.cache.mqtt_fetch_connect_seconds,
+            wait_seconds=self.config.cache.mqtt_fetch_wait_seconds,
+        )
+        state = self.store.get_or_create(vehicle_id)
+        state.mqtt_fetch_at = now
         if not fetched:
             return
-        state = self.store.get_or_create(vehicle_id)
         for suffix, payload in fetched.items():
             if isinstance(payload, dict):
                 state.set_topic(suffix, payload)
         refresh_active_fs_context(state)
+
+    def _build_cached_response(
+        self,
+        account: str,
+        vehicle_id: str,
+        *,
+        topics: dict[str, Any] | None = None,
+        state_version: int = 0,
+    ) -> CachedResponse:
+        account_cfg = self.config.account(account)
+        payload = build_stopinfo_response(topics or {}, account_cfg)
+        headers = _http_response_headers(
+            payload,
+            cache_max_age=self.config.cache.http_cache_max_age,
+        )
+        cached = CachedResponse(
+            body=orjson.dumps(payload),
+            headers=headers,
+            built_at=time.time(),
+            state_version=state_version,
+        )
+        self.store.put_response(account, vehicle_id, cached)
+        return cached
+
+    def get_stopinfo_response(self, account: str, vehicle_id: str) -> CachedResponse:
+        self.ensure_vehicle_stop_context(vehicle_id)
+        state = self.store.get_state(vehicle_id)
+        cached = self.store.get_response(
+            account,
+            vehicle_id,
+            fast_response_seconds=self.config.cache.fast_response_seconds,
+        )
+        if cached is not None and state is not None and cached.state_version == state.version:
+            return cached
+        if cached is not None and state is None and cached.state_version == 0:
+            return cached
+
+        if state is None:
+            return self._build_cached_response(account, vehicle_id, state_version=0)
+
+        self.rebuild_vehicle(vehicle_id, accounts=[account])
+        cached = self.store.get_response(
+            account,
+            vehicle_id,
+            fast_response_seconds=0,
+        )
+        if cached is not None:
+            return cached
+        return self._build_cached_response(account, vehicle_id, state_version=state.version)
 
     def rebuild_vehicle(self, vehicle_id: str, accounts: list[str] | None = None) -> None:
         state = self.store.get_state(vehicle_id)
@@ -242,22 +310,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.get("/api/stopinfo/{account}/{vehicle}")
     async def stopinfo(account: str, vehicle: str, request: Request) -> Response:
-        await asyncio.to_thread(state.ensure_vehicle_stop_context, vehicle)
-        state.rebuild_vehicle(vehicle, accounts=[account])
-        cached = state.store.get_response(
-            account,
-            vehicle,
-            fast_response_seconds=0,
-        )
-        if cached is None:
-            account_cfg = state.config.account(account)
-            payload = build_stopinfo_response({}, account_cfg)
-            headers = _http_response_headers(
-                payload,
-                cache_max_age=state.config.cache.http_cache_max_age,
-            )
-            return _legacy_cased_json_response(orjson.dumps(payload), headers)
-
+        cached = await asyncio.to_thread(state.get_stopinfo_response, account, vehicle)
         return _legacy_cased_json_response(cached.body, cached.headers)
 
     app.state.tco = state

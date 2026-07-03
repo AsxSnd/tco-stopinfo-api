@@ -25,6 +25,10 @@ cache:
   vehicle_ttl_seconds: 7200
   http_cache_max_age: 30
   journey_stopinfo_ttl_seconds: 30
+  # On-demand MQTT read when a vehicle has no cached topics (no active trip).
+  mqtt_fetch_cooldown_seconds: 30
+  mqtt_fetch_connect_seconds: 0.5
+  mqtt_fetch_wait_seconds: 0.35
 
 accounts:
   vilnius:

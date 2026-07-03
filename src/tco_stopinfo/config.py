@@ -49,6 +49,10 @@ class CacheConfig(BaseModel):
     vehicle_ttl_seconds: int = 7200
     http_cache_max_age: int = 30
     journey_stopinfo_ttl_seconds: int = 30
+    # Skip on-demand MQTT fetch for this long after a failed / empty read (no active trip).
+    mqtt_fetch_cooldown_seconds: int = 30
+    mqtt_fetch_connect_seconds: float = 0.5
+    mqtt_fetch_wait_seconds: float = 0.35
 
 
 class ExampleOmMessageConfig(BaseModel):

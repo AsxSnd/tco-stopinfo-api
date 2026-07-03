@@ -15,6 +15,7 @@ TOPIC_SUFFIXES = (
     "stopinfo",
     "list/stops",
     "connections",
+    "connections_upcoming_stops",
     "journeystate",
     "announcement",
     "list/announcements",
@@ -36,6 +37,7 @@ class VehicleState:
     active_journey_ref: str | None = None
     updated_at: float = field(default_factory=time.time)
     version: int = 0
+    mqtt_fetch_at: float = 0.0
 
     def set_topic(self, suffix: str, payload: Any) -> bool:
         previous = self.topics.get(suffix)

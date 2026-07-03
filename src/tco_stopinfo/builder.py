@@ -14,6 +14,8 @@ STATUS_NOT_MODIFIED = 304
 # Legacy PaCIM-RT / Hogia: X.TC-* second field is 0 when area has no data (204).
 TC_HEADER_SUFFIX_NO_DATA = "0"
 TC_HEADER_SUFFIX_HAS_DATA = "-1"
+# Wire order for X.TC-* headers (TD last).
+TC_HEADER_AREAS = ("FS", "LD", "MD", "OM", "TD")
 
 TRANSPORT_MODE_CODES = {
     "BUS": 700,
@@ -22,9 +24,16 @@ TRANSPORT_MODE_CODES = {
     "TRAIN": 100,
     "METRO": 400,
     "TUBE": 400,
+    "TROLLEYBUS": 800,
     "FERRY": 1200,
     "URBAN": 400,
 }
+
+
+def _transport_mode_code(raw: str | None) -> int:
+    if not raw:
+        return 700
+    return TRANSPORT_MODE_CODES.get(str(raw).upper(), 700)
 
 
 def _empty_area(heading: str = "") -> dict[str, Any]:
@@ -121,7 +130,8 @@ def _build_following_rows(
     target_seq: int | None,
     at_stop: bool,
     max_stops: int,
-    fs_connections: list[dict[str, Any]],
+    fs_connections_by_seq: dict[int, list[dict[str, Any]]] | None = None,
+    fs_connections: list[dict[str, Any]] | None = None,
     stop_pressed: bool,
     tz: ZoneInfo,
 ) -> list[dict[str, Any]]:
@@ -132,9 +142,16 @@ def _build_following_rows(
     if start_idx is None:
         return []
 
+    by_seq = fs_connections_by_seq or {}
     rows: list[dict[str, Any]] = []
     for offset, stop in enumerate(stops[start_idx : start_idx + max_stops]):
         seq = int(stop.get("number", start_idx + offset + 1))
+        if seq in by_seq:
+            row_connections = by_seq[seq]
+        elif offset == 0 and fs_connections:
+            row_connections = fs_connections
+        else:
+            row_connections = []
         eta_iso = _eta_for_sequence(linkprogress, seq) or stop.get("estimatedArrivalFull")
         rows.append(
             _build_following_stop_row(
@@ -143,7 +160,7 @@ def _build_following_rows(
                 eta_iso=eta_iso,
                 show_now=offset == 0,
                 at_stop=at_stop and offset == 0,
-                connections=fs_connections if offset == 0 else [],
+                connections=row_connections,
                 stop_pressed=stop_pressed,
                 tz=tz,
             )
@@ -282,9 +299,7 @@ def _build_fs_connections(
     for conn in connections_payload.get("connections") or []:
         if conn.get("cancelled"):
             continue
-        mode_code = TRANSPORT_MODE_CODES.get(
-            (conn.get("transportModeCode") or "BUS").upper(), 700
-        )
+        mode_code = _transport_mode_code(conn.get("transportModeCode"))
         line = conn.get("lineDesignation") or ""
         if not line:
             continue
@@ -292,7 +307,7 @@ def _build_fs_connections(
         if mode == "compact":
             if any(item.get("Line") == line for item in grouped[mode_code]):
                 continue
-            grouped[mode_code].append({"Line": line})
+        grouped[mode_code].append({"Line": line})
         if len(grouped[mode_code]) >= max_connections:
             continue
 
@@ -300,6 +315,39 @@ def _build_fs_connections(
         {"TransportType": transport_type, "Content": content}
         for transport_type, content in grouped.items()
     ]
+
+
+def _index_fs_connections_by_stop(
+    upcoming_payload: Any,
+    *,
+    mode: str,
+    max_connections: int,
+) -> dict[int, list[dict[str, Any]]]:
+    """Map callSequenceNumber -> FS Connections[] from connections_upcoming_stops."""
+    if not upcoming_payload:
+        return {}
+    if isinstance(upcoming_payload, dict):
+        entries = upcoming_payload.get("stops") or upcoming_payload.get("content") or []
+    elif isinstance(upcoming_payload, list):
+        entries = upcoming_payload
+    else:
+        return {}
+
+    by_seq: dict[int, list[dict[str, Any]]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        seq = entry.get("callSequenceNumber")
+        if seq is None:
+            continue
+        built = _build_fs_connections(
+            {"connections": entry.get("connections") or []},
+            mode=mode,
+            max_connections=max_connections,
+        )
+        if built:
+            by_seq[int(seq)] = built
+    return by_seq
 
 
 def _message_active(start: str | None, end: str | None, now: datetime | None = None) -> bool:
@@ -388,6 +436,7 @@ def build_stopinfo_response(
     stop_list = state_topics.get("list/stops") or {}
     destination = state_topics.get("destination") or {}
     connections = state_topics.get("connections")
+    upcoming_connections = state_topics.get("connections_upcoming_stops")
     dest_list = state_topics.get("list/destinations")
     stop_button = state_topics.get("sensors/stop_button") or {}
 
@@ -419,6 +468,11 @@ def build_stopinfo_response(
         mode=account.fs_connection_mode,
         max_connections=account.max_connections_per_stop,
     )
+    fs_connections_by_seq = _index_fs_connections_by_stop(
+        upcoming_connections,
+        mode=account.fs_connection_mode,
+        max_connections=account.max_connections_per_stop,
+    )
 
     following_rows = _build_following_rows(
         stops=stops,
@@ -426,6 +480,7 @@ def build_stopinfo_response(
         target_seq=target_seq,
         at_stop=at_stop,
         max_stops=account.max_following_stops,
+        fs_connections_by_seq=fs_connections_by_seq,
         fs_connections=fs_connections,
         stop_pressed=bool(stop_button.get("stopPressed")),
         tz=tz,
@@ -776,18 +831,19 @@ def format_tc_status_header(status_code: int) -> str:
 
 
 def build_response_headers(payload: dict[str, Any], *, cache_max_age: int) -> dict[str, str]:
-    """Build TCO response headers with legacy PaCIM-RT / Hogia names (X.TC-FS, …)."""
-    return {
+    """Build TCO response headers with legacy PaCIM-RT / Hogia names and order."""
+    headers: dict[str, str] = {
         "Content-Type": "application/json",
         "Cache-Control": f"max-age={cache_max_age}",
-        "X.TC-FS": format_tc_status_header(int(payload["FS"]["StatusCode"])),
-        "X.TC-LD": format_tc_status_header(int(payload["LD"]["StatusCode"])),
-        "X.TC-TD": format_tc_status_header(int(payload["TD"]["StatusCode"])),
-        "X.TC-MD": format_tc_status_header(int(payload["MD"]["StatusCode"])),
-        "X.TC-OM": format_tc_status_header(int(payload["OM"]["StatusCode"])),
     }
+    for area in TC_HEADER_AREAS:
+        headers[f"X.TC-{area}"] = format_tc_status_header(int(payload[area]["StatusCode"]))
+    return headers
 
 
 def legacy_cased_header_items(headers: dict[str, str]) -> list[tuple[bytes, bytes]]:
-    """Encode headers for Starlette without lowercasing names (Hogia expects X.TC-FS)."""
+    """Encode headers for Starlette without lowercasing names (Hogia expects X.TC-FS).
+
+    Dict insertion order is preserved (Content-Type, Cache-Control, X.TC-FS … X.TC-TD, Date).
+    """
     return [(name.encode("latin-1"), value.encode("latin-1")) for name, value in headers.items()]

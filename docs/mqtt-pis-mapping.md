@@ -19,6 +19,7 @@ vilniustest/{vehicle_id}/pis/0/{suffix}
 | `{root}/{vehicle_id}/pis/0/list/stops` | `vilniustest/1232/pis/0/list/stops` |
 | `{root}/{vehicle_id}/pis/0/stopinfo` | `vilniustest/1232/pis/0/stopinfo` |
 | `{root}/{vehicle_id}/pis/0/connections` | `vilniustest/1232/pis/0/connections` |
+| `{root}/{vehicle_id}/pis/0/connections_upcoming_stops` | `vilniustest/1232/pis/0/connections_upcoming_stops` |
 
 Config:
 
@@ -49,7 +50,8 @@ Set `mqtt.root: ""` and `topic_prefix: pis`.
 | `list/stops` | yes | FS — stop names, zones |
 | `list/destinations` | yes | FS — multiple destinations |
 | `stopinfo` | yes | FS — position (call sequence, ARRIVAL/DEPARTURE) |
-| `connections` | yes | FS connections + **LD** + **OM** situations |
+| `connections` | yes | **LD** + **OM** situations; FS fallback for current stop only |
+| `connections_upcoming_stops` | yes | **FS** — `Connections[]` per upcoming stop (`callSequenceNumber`) |
 | `journeystate` | yes | (stored; future gating of FS when not in traffic) |
 | `announcement` | yes | **OM** |
 | `list/announcements` | yes | **OM** |
@@ -114,8 +116,9 @@ Example messages are only used when no live OM data is present from MQTT (`conne
 | `Content[].AtStop` | `stopinfo.type` | `ARRIVAL` → true on first row; `DEPARTURE` → false |
 | `Content[].Requested` | `sensors/stop_button.stopPressed` or stop flags | `alightingAllowed` default true |
 | `Content[].Note` | `stops[].cancelled` | `"cancelled"` or empty |
-| `Content[].Connections` | `connections.connections[]` | Compact mode: unique lines per `transportModeCode` |
-| `Connections[].TransportType` | `connections.transportModeCode` | BUS→700, TRAM→900, RAIL→100, METRO→400 |
+| `Content[].Connections` | `connections_upcoming_stops[]` matched by `callSequenceNumber` → `stops[].number` | Per upcoming FS row; falls back to `connections` on first row only |
+| `Connections[].TransportType` | `transportModeCode` | BUS→700, TROLLEYBUS→800, TRAM→900, RAIL→100, METRO→400 |
+| `Connections[].Content[].Line` | `lineDesignation` | Unique lines per mode when `fs_connection_mode: compact` |
 | `Count` | Built rows | Max `accounts.*.max_following_stops` |
 | `Heading` | constant | `"Following stops"` |
 | `StatusCode` | — | 200 if `Count > 0`, else 204 |

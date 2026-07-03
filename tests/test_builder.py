@@ -6,6 +6,7 @@ from tco_stopinfo.builder import (
     STATUS_NO_CONTENT,
     STATUS_NOT_MODIFIED,
     STATUS_OK,
+    TC_HEADER_AREAS,
     build_response_headers,
     build_stopinfo_response,
     format_tc_status_header,
@@ -70,6 +71,14 @@ def test_format_tc_status_header_matches_legacy() -> None:
     assert format_tc_status_header(STATUS_NOT_MODIFIED) == "304,-1"
 
 
+def test_build_response_headers_tc_area_order() -> None:
+    account = AccountConfig(base_language="lt", max_following_stops=5)
+    payload = build_stopinfo_response({}, account)
+    headers = build_response_headers(payload, cache_max_age=30)
+    tc_names = [name for name in headers if name.startswith("X.TC-")]
+    assert tc_names == [f"X.TC-{area}" for area in TC_HEADER_AREAS]
+
+
 def test_build_response_headers_all_empty_areas() -> None:
     account = AccountConfig(base_language="lt", max_following_stops=5)
     payload = build_stopinfo_response({}, account)
@@ -131,6 +140,68 @@ def test_legacy_cased_header_items_preserve_names() -> None:
     )
     names = [name.decode("latin-1") for name, _value in items]
     assert names == ["X.TC-FS", "X.TC-LD", "Cache-Control", "Date"]
+
+
+def test_fs_connections_from_upcoming_stops_per_row() -> None:
+    account = AccountConfig(
+        base_language="lt",
+        max_following_stops=5,
+        max_connections_per_stop=10,
+        fs_connection_mode="compact",
+    )
+    upcoming = [
+        {
+            "callSequenceNumber": 1,
+            "connections": [{"lineDesignation": "21", "transportModeCode": "Trolleybus"}],
+        },
+        {
+            "callSequenceNumber": 2,
+            "connections": [
+                {"lineDesignation": "4G", "transportModeCode": "Bus"},
+                {"lineDesignation": "50", "transportModeCode": "Bus"},
+                {"lineDesignation": "2", "transportModeCode": "Trolleybus"},
+            ],
+        },
+        {
+            "callSequenceNumber": 3,
+            "connections": [{"lineDesignation": "6", "transportModeCode": "Trolleybus"}],
+        },
+    ]
+    topics = {
+        "journey": {"lineNumber": "12"},
+        "list/stops": {
+            "stops": [
+                {"number": 1, "name": "Klinikų st.", "zoneCode": "A"},
+                {"number": 2, "name": "Šilo tiltas", "zoneCode": "A"},
+                {"number": 3, "name": "Stop 3", "zoneCode": "A"},
+                {"number": 4, "name": "Stop 4", "zoneCode": "A"},
+                {"number": 5, "name": "Stop 5", "zoneCode": "A"},
+            ],
+        },
+        "stopinfo": {"callSequenceNumber": 1, "type": "ARRIVAL"},
+        "connections_upcoming_stops": upcoming,
+    }
+
+    response = build_stopinfo_response(topics, account)
+    fs = response["FS"]
+    assert fs["Count"] == 5
+
+    row0 = fs["Content"][0]
+    assert row0["Name"] == "Klinikų st."
+    assert row0["Connections"] == [
+        {"TransportType": 800, "Content": [{"Line": "21"}]},
+    ]
+
+    row1 = fs["Content"][1]
+    assert row1["Name"] == "Šilo tiltas"
+    bus = next(g for g in row1["Connections"] if g["TransportType"] == 700)
+    trolley = next(g for g in row1["Connections"] if g["TransportType"] == 800)
+    assert {"Line": "4G"} in bus["Content"]
+    assert {"Line": "50"} in bus["Content"]
+    assert {"Line": "2"} in trolley["Content"]
+
+    row2 = fs["Content"][2]
+    assert row2["Connections"] != []
 
 
 def test_build_fs_from_mqtt_sample() -> None:
