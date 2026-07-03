@@ -13,7 +13,7 @@ import orjson
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import ORJSONResponse
 
-from .builder import build_response_headers, build_stopinfo_response
+from .builder import build_response_headers, build_stopinfo_response, legacy_cased_header_items
 from .config import AppConfig, load_config
 from .journey_context import refresh_active_fs_context, resolve_journey_stop_context
 from .mqtt_client import MqttIngestService
@@ -28,6 +28,12 @@ def _http_response_headers(payload: dict, *, cache_max_age: int) -> dict[str, st
     headers = build_response_headers(payload, cache_max_age=cache_max_age)
     headers["Date"] = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
     return headers
+
+
+def _legacy_cased_json_response(body: bytes, headers: dict[str, str]) -> Response:
+    response = Response(content=body)
+    response.raw_headers = legacy_cased_header_items(headers)
+    return response
 
 
 class ApplicationState:
@@ -250,9 +256,9 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 payload,
                 cache_max_age=state.config.cache.http_cache_max_age,
             )
-            return Response(content=orjson.dumps(payload), media_type="application/json", headers=headers)
+            return _legacy_cased_json_response(orjson.dumps(payload), headers)
 
-        return Response(content=cached.body, media_type="application/json", headers=cached.headers)
+        return _legacy_cased_json_response(cached.body, cached.headers)
 
     app.state.tco = state
     return app

@@ -73,6 +73,8 @@ Each area is independent. HTTP status is always **200**; per-area status is in `
 
 Second header value: `0` when area `StatusCode` is 204, else `-1`.
 
+Header **names** must match legacy PaCIM-RT casing exactly (`X.TC-FS`, not `x.tc-fs`). Starlette lowercases dict-based headers; this service preserves the original names for Hogia clients.
+
 ## FS — Following Stops
 
 ### Area fields (in addition to common)

@@ -776,12 +776,18 @@ def format_tc_status_header(status_code: int) -> str:
 
 
 def build_response_headers(payload: dict[str, Any], *, cache_max_age: int) -> dict[str, str]:
-    areas = ("FS", "LD", "TD", "MD", "OM")
-    headers: dict[str, str] = {
+    """Build TCO response headers with legacy PaCIM-RT / Hogia names (X.TC-FS, …)."""
+    return {
         "Content-Type": "application/json",
         "Cache-Control": f"max-age={cache_max_age}",
+        "X.TC-FS": format_tc_status_header(int(payload["FS"]["StatusCode"])),
+        "X.TC-LD": format_tc_status_header(int(payload["LD"]["StatusCode"])),
+        "X.TC-TD": format_tc_status_header(int(payload["TD"]["StatusCode"])),
+        "X.TC-MD": format_tc_status_header(int(payload["MD"]["StatusCode"])),
+        "X.TC-OM": format_tc_status_header(int(payload["OM"]["StatusCode"])),
     }
-    for area in areas:
-        code = int(payload[area]["StatusCode"])
-        headers[f"X.TC-{area}"] = format_tc_status_header(code)
-    return headers
+
+
+def legacy_cased_header_items(headers: dict[str, str]) -> list[tuple[bytes, bytes]]:
+    """Encode headers for Starlette without lowercasing names (Hogia expects X.TC-FS)."""
+    return [(name.encode("latin-1"), value.encode("latin-1")) for name, value in headers.items()]

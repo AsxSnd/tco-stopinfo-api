@@ -9,6 +9,7 @@ from tco_stopinfo.builder import (
     build_response_headers,
     build_stopinfo_response,
     format_tc_status_header,
+    legacy_cased_header_items,
 )
 from tco_stopinfo.config import AccountConfig, ExampleOmMessageConfig
 from tco_stopinfo.journey_context import resolve_journey_stop_context
@@ -117,6 +118,19 @@ def test_build_response_headers_reflects_area_status_codes() -> None:
     assert headers["X.TC-TD"] == "204,0"
     assert headers["X.TC-MD"] == "204,0"
     assert headers["X.TC-OM"] == "204,0"
+
+
+def test_legacy_cased_header_items_preserve_names() -> None:
+    items = legacy_cased_header_items(
+        {
+            "X.TC-FS": "200,-1",
+            "X.TC-LD": "204,0",
+            "Cache-Control": "max-age=30",
+            "Date": "Fri, 03 Jul 2026 10:00:00 GMT",
+        }
+    )
+    names = [name.decode("latin-1") for name, _value in items]
+    assert names == ["X.TC-FS", "X.TC-LD", "Cache-Control", "Date"]
 
 
 def test_build_fs_from_mqtt_sample() -> None:
