@@ -73,7 +73,12 @@ Each area is independent. HTTP status is always **200**; per-area status is in `
 
 Second header value: `0` when area `StatusCode` is 204, else `-1`.
 
-Header **names** must match legacy PaCIM-RT casing exactly (`X.TC-FS`, not `x.tc-fs`). Starlette lowercases dict-based headers; this service preserves the original names for Hogia clients.
+Header **names** use legacy PaCIM-RT casing (`X.TC-FS`). The Python app emits that form when uvicorn runs with **`http=h11`** (the default for this service).
+
+**Why lowercase sometimes appears:**
+
+- **uvicorn `httptools`** lowercases all outgoing header names. Do not use it for this API.
+- **HTTP/2** (nginx `listen 443 ssl http2` or default HTTPS curl) always sends `x.tc-fs`. Use HTTP/1.1 to the client if capital letters are required end-to-end.
 
 ## FS — Following Stops
 

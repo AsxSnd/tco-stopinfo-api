@@ -19,8 +19,10 @@ upstream tco_stopinfo_vilnius {
 }
 
 server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    # Do not enable http2 here if clients must see X.TC-FS (capital letters).
+    # HTTP/2 always sends header names in lowercase (x.tc-fs); legacy PaCIM uses HTTP/1.1.
+    listen 443 ssl;
+    listen [::]:443 ssl;
     server_name stopinfo.vilnius.stjernberg.lab.suite.luminator.com;
 
     # Long lab hostnames need a larger bucket (default 64 is too small)

@@ -19,7 +19,10 @@ def _configure_asyncio_for_platform() -> None:
 
 def _uvicorn_runtime_options() -> dict[str, str]:
     """uvloop is Linux/macOS only; use defaults on Windows."""
-    options: dict[str, str] = {}
+    options: dict[str, str] = {
+        # h11 preserves legacy X.TC-* header casing; uvicorn httptools lowercases names.
+        "http": "h11",
+    }
     if sys.platform == "win32":
         options["loop"] = "asyncio"
     else:
@@ -29,12 +32,6 @@ def _uvicorn_runtime_options() -> dict[str, str]:
             options["loop"] = "uvloop"
         except ImportError:
             pass
-    try:
-        import httptools  # noqa: F401
-
-        options["http"] = "httptools"
-    except ImportError:
-        pass
     return options
 
 

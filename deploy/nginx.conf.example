@@ -5,7 +5,7 @@
 #
 # nginx handles:
 #   - TLS termination (certbot / Let's Encrypt)
-#   - HTTP/2
+#   - Optional HTTP/2 (see docs/deployment.md — disable http2 if clients need X.TC-FS casing)
 #   - Optional load balancing across multiple app instances
 #   - Static health checks
 #
@@ -24,7 +24,8 @@ upstream tco_stopinfo_backend {
 }
 
 server {
-    listen 443 ssl http2;
+    # listen 443 ssl http2;   # HTTP/2 lowercases X.TC-* to x.tc-* on the wire
+    listen 443 ssl;
     server_name stopinfo.example.com;
 
     ssl_certificate     /etc/letsencrypt/live/stopinfo.example.com/fullchain.pem;

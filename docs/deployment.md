@@ -96,6 +96,41 @@ sudo certbot --nginx -d stopinfo.example.com
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
+### X.TC header casing (uvicorn + HTTP/1.1 vs HTTP/2)
+
+Legacy PaCIM `QttpServer` responds over **HTTP/1.1** with headers like `X.TC-FS: 200,-1`.
+
+Two separate mechanisms can lowercase header names:
+
+1. **uvicorn `httptools` HTTP stack** — lowercases all response header names on the wire (`x.tc-fs`). This service forces **`http=h11`** in `tco_stopinfo.__main__` so localhost and nginx upstream see `X.TC-FS`.
+2. **nginx / client HTTP/2** — HTTP/2 always sends lowercase names. Disable `http2` on the nginx `listen` line if TLS clients must see capital letters.
+
+| Check | Command | Expected |
+|-------|---------|----------|
+| App direct | `curl -s -D - -o /dev/null http://127.0.0.1:8184/api/stopinfo/vilnius/1721 \| grep -i "\.TC-"` | `X.TC-FS:` |
+| Public URL, HTTP/1.1 | `curl --http1.1 -s -D - -o /dev/null https://si-lt.../api/stopinfo/... \| grep -i "\.TC-"` | `X.TC-FS:` |
+| Public URL, HTTP/2 | `curl -s -D - ...` (default on HTTPS) | `x.tc-fs:` (normal for HTTP/2) |
+
+If localhost still shows lowercase after upgrade, confirm the service restarted and was installed with the current code (`pip install .` + `systemctl restart tco-stopinfo-api`).
+
+If displays require capitalised names through TLS, **do not** enable `http2` on nginx:
+
+```nginx
+# Good for Hogia / legacy clients
+listen 443 ssl;
+
+# Avoid if clients need X.TC-FS casing on the wire
+listen 443 ssl http2;
+```
+
+See `deploy/nginx-vilnius-stjernberg.conf.example` (HTTP/1.1-only TLS).
+
+After changing nginx:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
 ### Vilnius lab (HTTP only — no TLS)
 
 Host name: **`stopinfo.vilnius.stjernberg.lab.suite.luminator.com`**
