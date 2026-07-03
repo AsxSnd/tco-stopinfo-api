@@ -24,6 +24,12 @@ from .store import CachedResponse, VehicleStore
 logger = logging.getLogger(__name__)
 
 
+def _http_response_headers(payload: dict, *, cache_max_age: int) -> dict[str, str]:
+    headers = build_response_headers(payload, cache_max_age=cache_max_age)
+    headers["Date"] = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
+    return headers
+
+
 class ApplicationState:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
@@ -88,11 +94,10 @@ class ApplicationState:
         for account_name in account_names:
             account_cfg = self.config.account(account_name)
             payload = build_stopinfo_response(topics, account_cfg)
-            headers = build_response_headers(
+            headers = _http_response_headers(
                 payload,
                 cache_max_age=self.config.cache.http_cache_max_age,
             )
-            headers["Date"] = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
             body = orjson.dumps(payload)
             self.store.put_response(
                 account_name,
@@ -241,12 +246,11 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         if cached is None:
             account_cfg = state.config.account(account)
             payload = build_stopinfo_response({}, account_cfg)
-            body = orjson.dumps(payload)
-            headers = build_response_headers(
+            headers = _http_response_headers(
                 payload,
                 cache_max_age=state.config.cache.http_cache_max_age,
             )
-            return Response(content=body, media_type="application/json", headers=headers)
+            return Response(content=orjson.dumps(payload), media_type="application/json", headers=headers)
 
         return Response(content=cached.body, media_type="application/json", headers=cached.headers)
 

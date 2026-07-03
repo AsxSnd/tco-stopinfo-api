@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from tco_stopinfo.builder import build_stopinfo_response
+from tco_stopinfo.builder import (
+    STATUS_NO_CONTENT,
+    STATUS_NOT_MODIFIED,
+    STATUS_OK,
+    build_response_headers,
+    build_stopinfo_response,
+    format_tc_status_header,
+)
 from tco_stopinfo.config import AccountConfig, ExampleOmMessageConfig
 from tco_stopinfo.journey_context import resolve_journey_stop_context
 from tco_stopinfo.store import VehicleState
@@ -54,6 +61,62 @@ def _vilnius_stops() -> list[dict]:
         }
         for i, name in enumerate(names)
     ]
+
+
+def test_format_tc_status_header_matches_legacy() -> None:
+    assert format_tc_status_header(STATUS_OK) == "200,-1"
+    assert format_tc_status_header(STATUS_NO_CONTENT) == "204,0"
+    assert format_tc_status_header(STATUS_NOT_MODIFIED) == "304,-1"
+
+
+def test_build_response_headers_all_empty_areas() -> None:
+    account = AccountConfig(base_language="lt", max_following_stops=5)
+    payload = build_stopinfo_response({}, account)
+
+    headers = build_response_headers(payload, cache_max_age=30)
+
+    for area in ("FS", "LD", "TD", "MD", "OM"):
+        assert headers[f"X.TC-{area}"] == "204,0"
+    assert headers["Cache-Control"] == "max-age=30"
+    assert headers["Content-Type"] == "application/json"
+
+
+def test_build_response_headers_reflects_area_status_codes() -> None:
+    account = AccountConfig(base_language="lt", max_following_stops=5)
+    topics = {
+        "journey": {"lineNumber": "10", "vehicleJourneyRef": "T10"},
+        "list/stops": {
+            "stops": [
+                {"number": 1, "name": "Stop A"},
+                {"number": 2, "name": "Stop B"},
+            ],
+        },
+        "stopinfo": {"callSequenceNumber": 1, "type": "ARRIVAL"},
+        "connections": {
+            "callSequenceNumber": 1,
+            "connections": [
+                {
+                    "transportModeCode": "BUS",
+                    "lineDesignation": "6",
+                    "directionName": "Centras",
+                    "departures": [
+                        {
+                            "plannedDepartureTime": "2026-07-01T11:30:00Z",
+                            "expectedDepartureTime": "2026-07-01T11:30:00Z",
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+    payload = build_stopinfo_response(topics, account)
+    headers = build_response_headers(payload, cache_max_age=30)
+
+    assert headers["X.TC-FS"] == "200,-1"
+    assert headers["X.TC-LD"] == "200,-1"
+    assert headers["X.TC-TD"] == "204,0"
+    assert headers["X.TC-MD"] == "204,0"
+    assert headers["X.TC-OM"] == "204,0"
 
 
 def test_build_fs_from_mqtt_sample() -> None:

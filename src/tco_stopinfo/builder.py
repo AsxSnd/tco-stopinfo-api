@@ -9,6 +9,11 @@ from .time_format import format_hhmm_local, get_timezone
 
 STATUS_OK = 200
 STATUS_NO_CONTENT = 204
+STATUS_NOT_MODIFIED = 304
+
+# Legacy PaCIM-RT / Hogia: X.TC-* second field is 0 when area has no data (204).
+TC_HEADER_SUFFIX_NO_DATA = "0"
+TC_HEADER_SUFFIX_HAS_DATA = "-1"
 
 TRANSPORT_MODE_CODES = {
     "BUS": 700,
@@ -761,18 +766,22 @@ def _build_om_area(
     }
 
 
-def build_response_headers(payload: dict[str, Any], *, cache_max_age: int) -> dict[str, str]:
-    def tc_header(area: str) -> str:
-        code = int(payload[area]["StatusCode"])
-        suffix = "0" if code == STATUS_NO_CONTENT else "-1"
-        return f"{code},{suffix}"
+def format_tc_status_header(status_code: int) -> str:
+    """Format X.TC-* header value per legacy tcoioh (Hogia backward compatibility).
 
-    return {
+    Examples: 200,-1 (has content), 204,0 (empty), 304,-1 (unchanged).
+    """
+    suffix = TC_HEADER_SUFFIX_NO_DATA if status_code == STATUS_NO_CONTENT else TC_HEADER_SUFFIX_HAS_DATA
+    return f"{status_code},{suffix}"
+
+
+def build_response_headers(payload: dict[str, Any], *, cache_max_age: int) -> dict[str, str]:
+    areas = ("FS", "LD", "TD", "MD", "OM")
+    headers: dict[str, str] = {
         "Content-Type": "application/json",
         "Cache-Control": f"max-age={cache_max_age}",
-        "X.TC-FS": tc_header("FS"),
-        "X.TC-LD": tc_header("LD"),
-        "X.TC-TD": tc_header("TD"),
-        "X.TC-MD": tc_header("MD"),
-        "X.TC-OM": tc_header("OM"),
     }
+    for area in areas:
+        code = int(payload[area]["StatusCode"])
+        headers[f"X.TC-{area}"] = format_tc_status_header(code)
+    return headers
